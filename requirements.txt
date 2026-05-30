@@ -1,0 +1,10 @@
+gradio
+ultralytics
+tensorflow
+faiss-cpu
+opencv-python-headless
+pandas
+numpy
+scikit-learn
+pillow
+matplotlib
