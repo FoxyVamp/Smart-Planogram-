@@ -1,0 +1,14 @@
+flask
+gunicorn
+ultralytics==8.3.40
+torch==2.2.2
+torchvision==0.17.2
+tensorflow-cpu==2.18.0
+keras==3.8.0
+faiss-cpu==1.8.0.post1
+opencv-python-headless==4.10.0.84
+pandas
+numpy==1.26.4
+scikit-learn
+pillow
+matplotlib
