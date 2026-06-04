@@ -14,10 +14,6 @@ from tensorflow.keras.layers import Dense
 # ============================================================
 # KERAS COMPATIBILITY FIX
 # ============================================================
-# The feature model was saved with a newer Keras field:
-# quantization_config.
-# Some Hugging Face/Keras versions do not understand this field.
-# This patch removes it automatically when loading Dense layers.
 
 _original_dense_from_config = Dense.from_config
 
@@ -105,10 +101,6 @@ def load_models():
     _models_loaded = True
 
 
-# ============================================================
-# 3. IMAGE LOADING
-# ============================================================
-
 def load_image_rgb(image_path):
     img_bgr = cv2.imread(image_path)
 
@@ -119,7 +111,7 @@ def load_image_rgb(image_path):
 
 
 # ============================================================
-# 4. PRODUCT RECOGNITION HELPERS
+# 3. PRODUCT RECOGNITION
 # ============================================================
 
 def prep_crop_for_identification(crop_rgb, contrast_factor=1.0):
@@ -180,7 +172,7 @@ def similarity_status(similarity):
 
 
 # ============================================================
-# 5. TEAMMATE PIPELINE WRAPPED AS FUNCTION
+# 4. TEAMMATE PIPELINE
 # ============================================================
 
 def run_teammate_pipeline(image_rgb, image_name="uploaded_image"):
@@ -262,13 +254,7 @@ def run_teammate_pipeline(image_rgb, image_name="uploaded_image"):
 
             label = f"{sku} (R{row_num}-P{idx})"
 
-            cv2.rectangle(
-                img,
-                (x1, y1),
-                (x2, y2),
-                (0, 255, 0),
-                2
-            )
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
             cv2.putText(
                 img,
@@ -297,7 +283,7 @@ def run_teammate_pipeline(image_rgb, image_name="uploaded_image"):
 
 
 # ============================================================
-# 6. TABLE HELPERS
+# 5. TABLE HELPERS
 # ============================================================
 
 def build_product_table(df_current):
@@ -348,7 +334,7 @@ def build_row_summary_from_df(df_current):
 
 
 # ============================================================
-# 7. COMPARISON LOGIC
+# 6. COMPARISON LOGIC
 # ============================================================
 
 def get_sku_columns(df):
@@ -373,22 +359,10 @@ def compare_ideal_vs_current(df_ideal, df_current):
 
     for sku in sku_cols:
         expected = df_ideal[sku].notna().sum()
-
-        if sku in df_current.columns:
-            actual = df_current[sku].notna().sum()
-        else:
-            actual = 0
+        actual = df_current[sku].notna().sum() if sku in df_current.columns else 0
+        missing = max(0, expected - actual)
 
         if expected > 0 or actual > 0:
-            missing = max(0, expected - actual)
-
-            if missing > 0:
-                status = "Missing"
-                action = f"Restock {missing} unit(s)"
-            else:
-                status = "OK"
-                action = "No restock needed"
-
             comparison_rows.append({
                 "type": "SKU comparison",
                 "row_id": "-",
@@ -396,8 +370,8 @@ def compare_ideal_vs_current(df_ideal, df_current):
                 "expected_quantity": int(expected),
                 "current_quantity": int(actual),
                 "missing_quantity": int(missing),
-                "status": status,
-                "action": action,
+                "status": "Missing" if missing > 0 else "OK",
+                "action": f"Restock {missing} unit(s)" if missing > 0 else "No restock needed",
             })
 
     ideal_row_counts = df_ideal.groupby("assigned_row").size()
@@ -412,16 +386,6 @@ def compare_ideal_vs_current(df_ideal, df_current):
         actual = int(current_row_counts.get(row_id, 0))
         missing = max(0, expected - actual)
 
-        if actual < expected:
-            status = "Under-stocked"
-            action = f"Restock {missing} item(s)"
-        elif actual > expected:
-            status = "Extra items"
-            action = f"Review {actual - expected} extra item(s)"
-        else:
-            status = "OK"
-            action = "No restock needed"
-
         comparison_rows.append({
             "type": "Row count comparison",
             "row_id": int(row_id),
@@ -429,15 +393,62 @@ def compare_ideal_vs_current(df_ideal, df_current):
             "expected_quantity": expected,
             "current_quantity": actual,
             "missing_quantity": missing,
-            "status": status,
-            "action": action,
+            "status": "Under-stocked" if missing > 0 else "OK",
+            "action": f"Restock {missing} item(s)" if missing > 0 else "No restock needed",
         })
 
     return comparison_rows
 
 
+def compare_positions_ideal_vs_current(df_ideal, df_current):
+    """
+    Compares stored planogram vs current shelf by:
+    row number + left-to-right product position.
+
+    This gives a simple prototype-level misplaced product check.
+    """
+
+    misplaced_items = []
+
+    if df_ideal.empty or df_current.empty:
+        return misplaced_items
+
+    ideal = df_ideal.sort_values(
+        ["assigned_row", "x_center"]
+    ).reset_index(drop=True)
+
+    current = df_current.sort_values(
+        ["assigned_row", "x_center"]
+    ).reset_index(drop=True)
+
+    ideal["object_id_in_row"] = ideal.groupby("assigned_row").cumcount() + 1
+    current["object_id_in_row"] = current.groupby("assigned_row").cumcount() + 1
+
+    for _, expected_item in ideal.iterrows():
+        row_id = int(expected_item["assigned_row"])
+        position = int(expected_item["object_id_in_row"])
+        expected_sku = str(expected_item.get("predicted_sku", "Unknown"))
+
+        match = current[
+            (current["assigned_row"] == row_id) &
+            (current["object_id_in_row"] == position)
+        ]
+
+        if match.empty:
+            continue
+
+        current_sku = str(match.iloc[0].get("predicted_sku", "Unknown"))
+
+        if expected_sku != current_sku:
+            misplaced_items.append(
+                f"Row {row_id}, Position {position}: expected SKU {expected_sku}, detected SKU {current_sku}"
+            )
+
+    return misplaced_items
+
+
 # ============================================================
-# 8. MAIN FUNCTION CALLED BY app.py
+# 7. MAIN FUNCTION CALLED BY app.py
 # ============================================================
 
 def analyze_shelf_image(current_image_rgb, shelf_id="shelf_a"):
@@ -450,6 +461,7 @@ def analyze_shelf_image(current_image_rgb, shelf_id="shelf_a"):
             "products": [],
             "row_summary": [],
             "planogram_comparison": [],
+            "misplaced_items": [],
         }
 
     if shelf_id not in PLANOGRAM_PATHS:
@@ -475,6 +487,7 @@ def analyze_shelf_image(current_image_rgb, shelf_id="shelf_a"):
     )
 
     comparison = compare_ideal_vs_current(df_ideal, df_current)
+    misplaced_items = compare_positions_ideal_vs_current(df_ideal, df_current)
 
     product_table = build_product_table(df_current)
     row_summary = build_row_summary_from_df(df_current)
@@ -492,10 +505,10 @@ def analyze_shelf_image(current_image_rgb, shelf_id="shelf_a"):
         f"Current detected products: {len(df_current)}\n"
         f"Planogram detected rows: {len(ideal_row_centers)}\n"
         f"Current detected rows: {len(current_row_centers)}\n"
-        f"Total missing quantity estimate: {total_missing}\n\n"
-        "Note: This keeps the teammate pipeline logic. "
-        "The backend automatically runs the same pipeline twice: "
-        "once on the stored full-shelf planogram image and once on the uploaded current shelf image."
+        f"Total missing quantity estimate: {total_missing}\n"
+        f"Misplaced items estimate: {len(misplaced_items)}\n\n"
+        "Note: The backend runs the same teammate pipeline twice: "
+        "once on the stored full-shelf planogram and once on the uploaded current shelf image."
     )
 
     return {
@@ -504,4 +517,5 @@ def analyze_shelf_image(current_image_rgb, shelf_id="shelf_a"):
         "products": product_table,
         "row_summary": row_summary,
         "planogram_comparison": comparison,
+        "misplaced_items": misplaced_items,
     }
