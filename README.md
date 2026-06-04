@@ -3,6 +3,7 @@
 ## Overview
 
 Smart Planogram is an AI-powered shelf compliance system that compares a current shelf image against a stored planogram image. The system automatically detects products, identifies them using machine learning, and generates compliance and restocking reports.
+
 [Smart Planogram](https://drive.google.com/drive/folders/1c15aTXThyBCzValCp__v1kyCFnAcd4Fu)
 
 The project combines:
